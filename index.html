@@ -1,0 +1,865 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>HLS Loop Player</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/vue/2.7.16/vue.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/hls.js/1.5.7/hls.min.js"></script>
+<script src="/mux.min.js"></script>
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  background: #090d12; color: #e6edf3;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  min-height: 100vh; display: flex; flex-direction: column;
+  align-items: center; padding: 32px 16px 64px; gap: 20px;
+}
+h1 { font-size: 0.68rem; font-weight: 400; letter-spacing: 0.22em; text-transform: uppercase; color: #3d444d; }
+#app { width: 100%; max-width: 920px; display: flex; flex-direction: column; gap: 12px; }
+.card { background: #0d1117; border: 1px solid #21262d; border-radius: 10px; overflow: hidden; }
+
+/* Video */
+.player-wrap { position: relative; background: #000; aspect-ratio: 16/9; }
+video { width: 100%; height: 100%; display: block; object-fit: contain; }
+.no-stream {
+  position: absolute; inset: 0; display: flex; flex-direction: column;
+  align-items: center; justify-content: center; gap: 8px; color: #3d444d; font-size: 0.78rem; pointer-events: none;
+}
+.no-stream-icon { font-size: 2.2rem; opacity: 0.25; }
+
+/* Seg track */
+.seg-track {
+  position: absolute; bottom: 0; left: 0; right: 0; padding: 10px 12px;
+  display: flex; align-items: center; gap: 4px; flex-wrap: wrap;
+  background: linear-gradient(to top, rgba(0,0,0,0.8) 0%, transparent 100%);
+}
+.seg-chip {
+  padding: 3px 10px; border-radius: 4px; font-size: 0.64rem; font-family: 'SF Mono', monospace;
+  font-weight: 600; border: 1px solid transparent; opacity: 0.4; transition: all 0.2s;
+  white-space: nowrap; max-width: 100px; overflow: hidden; text-overflow: ellipsis;
+}
+.seg-chip.normal  { background: #0d2137; border-color: #1f4068; color: #58a6ff; }
+.seg-chip.replace { background: #2a1500; border-color: #5a3000; color: #f0883e; }
+.seg-chip.active  { opacity: 1; transform: scale(1.08); }
+.seg-chip.active.normal  { background: #1f4068; border-color: #79c0ff; box-shadow: 0 0 10px rgba(88,166,255,.35); }
+.seg-chip.active.replace { background: #5a3000; border-color: #f0883e; box-shadow: 0 0 10px rgba(240,136,62,.35); }
+.seg-arrow { color: #3d444d; font-size: 0.6rem; flex-shrink: 0; }
+
+/* Progress */
+.progress-wrap { position: absolute; bottom: 0; left: 0; right: 0; height: 3px; background: rgba(255,255,255,0.1); }
+.progress-bar { height: 100%; background: #58a6ff; transition: width 0.1s linear; }
+
+/* Status */
+.status-bar { display: flex; border-top: 1px solid #21262d; }
+.status-item {
+  flex: 1; display: flex; align-items: center; justify-content: space-between;
+  padding: 9px 14px; border-right: 1px solid #21262d; font-size: 0.68rem; gap: 6px; min-width: 0;
+}
+.status-item:last-child { border-right: none; }
+.status-label { color: #484f58; white-space: nowrap; flex-shrink: 0; }
+.badge {
+  padding: 2px 8px; border-radius: 3px; font-size: 0.62rem; font-family: 'SF Mono', monospace;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 130px;
+}
+.badge-green  { background: #0d2a0d; color: #56d364; }
+.badge-yellow { background: #2a200a; color: #e3b341; }
+.badge-orange { background: #2a1500; color: #f0883e; }
+.badge-blue   { background: #0d1f3d; color: #58a6ff; }
+.badge-grey   { background: #161b22; color: #8b949e; }
+.badge-red    { background: #2a0d0d; color: #f85149; }
+.badge-purple { background: #1a0d2a; color: #bc8cff; }
+
+/* Panel */
+.panel { border-top: 1px solid #21262d; padding: 16px; display: flex; flex-direction: column; gap: 14px; }
+.panel-title { font-size: 0.6rem; color: #484f58; text-transform: uppercase; letter-spacing: 0.16em; }
+
+/* Seg rows */
+.seg-list { display: flex; flex-direction: column; gap: 6px; }
+.seg-row-wrap { display: flex; flex-direction: column; }
+.seg-row {
+  display: flex; align-items: center; gap: 8px; padding: 8px 10px;
+  background: #010409; border: 1px solid #21262d; border-radius: 6px; transition: border-color .15s;
+}
+.seg-row:hover { border-color: #30363d; }
+.seg-row.is-replace { border-color: #3d2500; background: #0d0800; border-radius: 6px 6px 0 0; }
+.seg-index { font-size: 0.62rem; color: #484f58; font-family: 'SF Mono', monospace; min-width: 18px; flex-shrink: 0; }
+.seg-name-input {
+  width: 56px; flex-shrink: 0; background: #161b22; border: 1px solid #30363d; border-radius: 4px;
+  color: #e6edf3; font-size: 0.7rem; font-family: 'SF Mono', monospace; padding: 4px 7px; outline: none;
+}
+.seg-name-input:focus { border-color: #58a6ff; }
+.source-area { flex: 1; display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.source-tabs { display: flex; gap: 2px; }
+.source-tab {
+  font-size: 0.58rem; padding: 2px 8px; border-radius: 3px; border: 1px solid #21262d;
+  background: none; color: #484f58; cursor: pointer; transition: all .15s;
+}
+.source-tab.active { background: #161b22; border-color: #30363d; color: #e6edf3; }
+.source-tab:hover:not(.active) { color: #8b949e; }
+.source-tab:disabled { opacity: .35; cursor: not-allowed; }
+.seg-url-input {
+  flex: 1; background: #161b22; border: 1px solid #30363d; border-radius: 4px;
+  color: #e6edf3; font-size: 0.7rem; font-family: 'SF Mono', monospace; padding: 4px 8px; outline: none; min-width: 0;
+}
+.seg-url-input:focus { border-color: #58a6ff; }
+.seg-url-input::placeholder { color: #3d444d; }
+.upload-zone {
+  display: flex; align-items: center; gap: 8px; padding: 5px 10px;
+  border: 1px dashed #30363d; border-radius: 4px; cursor: pointer; transition: all .15s; background: #161b22;
+}
+.upload-zone:hover { border-color: #58a6ff; background: #0d1f3d; }
+.upload-zone.has-file { border-color: #1f4d1f; border-style: solid; background: #0d1f0d; }
+.upload-zone.drag-over { border-color: #58a6ff !important; background: #0d1f3d !important; }
+.upload-zone.disabled {
+  opacity: .45; cursor: not-allowed; border-style: solid;
+  border-color: #21262d; background: #0d1117; pointer-events: none;
+}
+.upload-zone.disabled:hover { border-color: #21262d; background: #0d1117; }
+.upload-zone.disabled .upload-text { color: #484f58; }
+.upload-icon { font-size: 0.85rem; flex-shrink: 0; }
+.upload-text { font-size: 0.64rem; color: #8b949e; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.upload-text.has-file { color: #56d364; }
+.file-input-hidden { display: none; }
+.dur-input {
+  width: 56px; flex-shrink: 0; background: #161b22; border: 1px solid #30363d; border-radius: 4px;
+  color: #e3b341; font-size: 0.7rem; font-family: 'SF Mono', monospace; padding: 4px 6px; outline: none; text-align: center;
+}
+.dur-input:focus { border-color: #e3b341; }
+.dur-input:disabled { opacity: .4; }
+.dur-label { font-size: 0.6rem; color: #484f58; flex-shrink: 0; }
+.replace-toggle {
+  display: flex; align-items: center; gap: 5px; font-size: 0.63rem; color: #484f58;
+  cursor: pointer; white-space: nowrap; user-select: none; flex-shrink: 0;
+}
+.replace-toggle input[type=checkbox] { accent-color: #f0883e; width: 13px; height: 13px; }
+.replace-toggle.checked { color: #f0883e; }
+.btn-icon {
+  background: none; border: none; color: #484f58; cursor: pointer;
+  padding: 2px 5px; border-radius: 3px; font-size: 0.8rem; line-height: 1; transition: color .15s; flex-shrink: 0;
+}
+.btn-icon:hover { color: #f85149; }
+.btn-icon:disabled { opacity: .3; cursor: not-allowed; }
+
+/* Replace expand */
+.replace-expand {
+  background: #0a0600; border: 1px solid #3d2500; border-top: none;
+  border-radius: 0 0 6px 6px; padding: 10px 12px; display: flex; flex-direction: column; gap: 8px;
+}
+.replace-header { display: flex; align-items: center; gap: 10px; }
+.random-toggle { display: flex; align-items: center; gap: 6px; font-size: 0.65rem; cursor: pointer; user-select: none; }
+.random-toggle input[type=checkbox] { accent-color: #bc8cff; width: 13px; height: 13px; }
+.random-label { color: #484f58; }
+.random-label.on { color: #bc8cff; }
+.candidates { display: flex; flex-direction: column; gap: 5px; }
+.candidate-row {
+  display: flex; align-items: center; gap: 8px; padding: 6px 8px;
+  background: #0d0800; border: 1px solid #2a1800; border-radius: 5px;
+}
+.cand-badge {
+  font-size: 0.6rem; font-family: 'SF Mono', monospace; background: #2a1500; color: #f0883e;
+  border-radius: 3px; padding: 2px 7px; flex-shrink: 0; white-space: nowrap;
+}
+.cand-badge.default { background: #0d2a0d; color: #56d364; }
+.btn-add-cand {
+  background: #0a0600; border: 1px dashed #3d2500; border-radius: 5px;
+  color: #5a3000; font-size: 0.68rem; padding: 6px; cursor: pointer; width: 100%; transition: all .15s;
+}
+.btn-add-cand:hover { border-color: #f0883e; color: #f0883e; }
+.btn-add-cand:disabled { opacity: .3; cursor: not-allowed; }
+.btn-add {
+  background: #010409; border: 1px dashed #30363d; border-radius: 6px;
+  color: #484f58; font-size: 0.72rem; padding: 8px; cursor: pointer; width: 100%; transition: all .15s;
+}
+.btn-add:hover { border-color: #58a6ff; color: #58a6ff; }
+.btn-add:disabled { opacity: .3; cursor: not-allowed; }
+.btn-row { display: flex; gap: 8px; flex-wrap: wrap; }
+.btn {
+  background: #21262d; color: #e6edf3; border: 1px solid #30363d; border-radius: 5px;
+  padding: 7px 16px; font-size: 0.73rem; cursor: pointer; transition: background .15s; white-space: nowrap;
+}
+.btn:hover { background: #30363d; }
+.btn:disabled { opacity: .35; cursor: not-allowed; }
+.btn-blue { background: #0d1f3d; border-color: #1f4068; color: #58a6ff; }
+.btn-blue:hover:not(:disabled) { background: #1f4068; }
+.btn-red  { background: #2a0d0d; border-color: #5a1a1a; color: #f85149; }
+.btn-red:hover:not(:disabled)  { background: #3a1010; }
+
+/* Signal panel */
+.signal-panel { border-top: 1px solid #21262d; padding: 14px 16px; display: flex; flex-direction: column; gap: 12px; }
+.signal-group { display: flex; flex-direction: column; gap: 6px; }
+.signal-group-label { display: flex; align-items: center; gap: 8px; font-size: 0.65rem; color: #8b949e; }
+.rp-tag { background: #2a1500; color: #f0883e; border-radius: 3px; padding: 1px 7px; font-size: 0.6rem; font-family: 'SF Mono', monospace; }
+.mode-tag { font-size: 0.6rem; padding: 1px 7px; border-radius: 3px; }
+.mode-tag.manual { background: #161b22; color: #8b949e; }
+.signal-btns { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+.btn-signal {
+  padding: 5px 14px; border-radius: 4px; font-size: 0.7rem; font-family: 'SF Mono', monospace;
+  cursor: pointer; border: 1px solid transparent; transition: all .15s; white-space: nowrap;
+}
+.btn-signal.is-default { background: #0d2a0d; border-color: #1f4d1f; color: #56d364; }
+.btn-signal.is-default:hover { background: #1f4d1f; }
+.btn-signal.is-alt { background: #2a1500; border-color: #5a3000; color: #f0883e; }
+.btn-signal.is-alt:hover { background: #3a1e00; }
+.btn-signal.selected { outline: 2px solid currentColor; outline-offset: 2px; }
+.signal-status { font-size: 0.63rem; color: #484f58; font-family: 'SF Mono', monospace; }
+.signal-status.picked { color: #e3b341; }
+
+/* Log */
+.log { border-top: 1px solid #21262d; max-height: 160px; overflow-y: auto; }
+.log-header {
+  display: flex; align-items: center; justify-content: space-between; padding: 7px 14px;
+  border-bottom: 1px solid #21262d; font-size: 0.6rem; color: #484f58; text-transform: uppercase;
+  letter-spacing: .12em; position: sticky; top: 0; background: #0d1117; z-index: 1;
+}
+.log-clear { background: none; border: none; color: #484f58; font-size: .62rem; cursor: pointer; padding: 2px 6px; border-radius: 3px; }
+.log-clear:hover { color: #8b949e; }
+.log-entry { display: flex; gap: 10px; padding: 4px 14px; font-size: 0.66rem; font-family: 'SF Mono', monospace; border-bottom: 1px solid #0d1117; align-items: baseline; }
+.log-time  { color: #3d444d; flex-shrink: 0; }
+.log-msg   { color: #8b949e; word-break: break-all; }
+.log-msg.info   { color: #58a6ff; }
+.log-msg.ok     { color: #56d364; }
+.log-msg.warn   { color: #e3b341; }
+.log-msg.orange { color: #f0883e; }
+.log-msg.purple { color: #bc8cff; }
+.log-msg.error  { color: #f85149; }
+.log-empty { padding: 16px 14px; font-size: .68rem; color: #3d444d; text-align: center; }
+</style>
+</head>
+<body>
+<h1>HLS Loop Player</h1>
+<div id="app">
+<div class="card">
+
+  <!-- Video -->
+  <div class="player-wrap">
+    <video ref="video" controls playsinline></video>
+    <div class="no-stream" v-if="!playing">
+      <div class="no-stream-icon">▶</div>
+      <div>設定片段後按「開始播放」</div>
+    </div>
+    <div class="seg-track" v-if="playing">
+      <template v-for="(seg, i) in segments">
+        <div :key="'c'+seg.id" class="seg-chip"
+          :class="[seg.isReplace?'replace':'normal', currentIndex===i?'active':'']"
+          :title="seg.name">{{ seg.name }}</div>
+        <div :key="'a'+seg.id" class="seg-arrow" v-if="i<segments.length-1">›</div>
+      </template>
+      <div class="seg-arrow">↺</div>
+    </div>
+    <div class="progress-wrap" v-if="playing">
+      <div class="progress-bar" :style="{width: progressPct+'%'}"></div>
+    </div>
+  </div>
+
+  <!-- Status -->
+  <div class="status-bar">
+    <div class="status-item">
+      <span class="status-label">狀態</span>
+      <span class="badge" :class="statusBadgeClass">{{ playerStatus }}</span>
+    </div>
+    <div class="status-item">
+      <span class="status-label">目前片段</span>
+      <span class="badge badge-blue">{{ currentSegLabel || '—' }}</span>
+    </div>
+    <div class="status-item">
+      <span class="status-label">循環</span>
+      <span class="badge badge-grey">{{ loopCount }} 次</span>
+    </div>
+  </div>
+
+  <!-- Segment builder -->
+  <div class="panel">
+    <div class="panel-title">片段設定</div>
+    <div class="seg-list">
+      <div class="seg-row-wrap" v-for="(seg, i) in segments" :key="seg.id">
+        <div class="seg-row" :class="{'is-replace': seg.isReplace}">
+          <span class="seg-index">{{ i+1 }}</span>
+          <input class="seg-name-input" v-model="seg.name" placeholder="名稱" :disabled="playing" />
+          <div class="source-area">
+            <template v-if="seg.isReplace">
+              <div class="upload-zone disabled">
+                <span class="upload-text">請在下方候選加入檔案</span>
+              </div>
+            </template>
+            <template v-else>
+              <div class="source-tabs">
+                <button class="source-tab" :class="{active:seg.sourceMode==='url'}"  @click="seg.sourceMode='url'"  :disabled="playing">URL</button>
+                <button class="source-tab" :class="{active:seg.sourceMode==='file'}" @click="seg.sourceMode='file'" :disabled="playing">本地</button>
+              </div>
+              <div v-if="seg.sourceMode==='url'">
+                <input class="seg-url-input" v-model="seg.url" placeholder="ts URL" :disabled="playing" />
+              </div>
+              <div v-else>
+                <div class="upload-zone" :class="{'has-file':!!seg.fileName,'drag-over':seg.dragOver}"
+                  @click="triggerFile(seg.id,'main')"
+                  @dragover.prevent="seg.dragOver=true" @dragleave="seg.dragOver=false"
+                  @drop.prevent="onDrop($event,seg)">
+                  <span class="upload-icon">{{ seg.fileName?'✓':'↑' }}</span>
+                  <span class="upload-text" :class="{'has-file':!!seg.fileName}">{{ seg.fileName||'點擊或拖曳 .ts' }}</span>
+                </div>
+                <input type="file" accept=".ts,video/mp2t" class="file-input-hidden" :ref="'file-main-'+seg.id" @change="onFileChange($event,seg)" />
+              </div>
+            </template>
+          </div>
+          <input class="dur-input" type="number" min="1" max="600" v-model.number="seg.duration" :disabled="playing || seg.isReplace" />
+          <span class="dur-label">秒</span>
+          <label class="replace-toggle" :class="{checked:seg.isReplace}">
+            <input type="checkbox" v-model="seg.isReplace" :disabled="playing" @change="onReplaceToggle(seg)" />
+            替換點
+          </label>
+          <button class="btn-icon" @click="removeSeg(i)" :disabled="playing">✕</button>
+        </div>
+
+        <div class="replace-expand" v-if="seg.isReplace">
+          <div class="replace-header">
+            <label class="random-toggle">
+              <input type="checkbox" v-model="seg.randomMode" :disabled="playing" />
+              <span class="random-label" :class="{on:seg.randomMode}">{{ seg.randomMode?'🎲 隨機模式':'手動模式（等 button 訊號）' }}</span>
+            </label>
+          </div>
+          <div class="candidates">
+            <div class="candidate-row" v-for="(cand,ci) in seg.candidates" :key="cand.id">
+              <span class="cand-badge" :class="{default:ci===0}">{{ ci===0?'預設':`候選${ci+1}` }}</span>
+              <input class="seg-name-input" style="width:48px" v-model="cand.name" :placeholder="'C'+(ci+1)" :disabled="playing" />
+              <div class="source-area">
+                <div class="source-tabs">
+                  <button class="source-tab" :class="{active:cand.sourceMode==='url'}"  @click="cand.sourceMode='url'"  :disabled="playing">URL</button>
+                  <button class="source-tab" :class="{active:cand.sourceMode==='file'}" @click="cand.sourceMode='file'" :disabled="playing">本地</button>
+                </div>
+                <div v-if="cand.sourceMode==='url'">
+                  <input class="seg-url-input" v-model="cand.url" placeholder="ts URL" :disabled="playing" />
+                </div>
+                <div v-else>
+                  <div class="upload-zone" :class="{'has-file':!!cand.fileName,'drag-over':cand.dragOver}"
+                    @click="triggerFile(cand.id,'cand')"
+                    @dragover.prevent="cand.dragOver=true" @dragleave="cand.dragOver=false"
+                    @drop.prevent="onDropCand($event,cand)">
+                    <span class="upload-icon">{{ cand.fileName?'✓':'↑' }}</span>
+                    <span class="upload-text" :class="{'has-file':!!cand.fileName}">{{ cand.fileName||'點擊或拖曳 .ts' }}</span>
+                  </div>
+                  <input type="file" accept=".ts,video/mp2t" class="file-input-hidden" :ref="'file-cand-'+cand.id" @change="onFileChangeCand($event,cand)" />
+                </div>
+              </div>
+              <input class="dur-input" type="number" min="1" max="600" v-model.number="cand.duration" :disabled="playing" />
+              <span class="dur-label">秒</span>
+              <button class="btn-icon" @click="removeCand(seg,ci)" :disabled="playing||seg.candidates.length<=1">✕</button>
+            </div>
+          </div>
+          <button class="btn-add-cand" @click="addCand(seg)" :disabled="playing">＋ 新增候選</button>
+        </div>
+      </div>
+    </div>
+    <button class="btn-add" @click="addSeg" :disabled="playing">＋ 新增片段</button>
+    <div class="btn-row">
+      <button class="btn btn-blue" @click="startPlay" :disabled="playing">▶ 開始播放</button>
+      <button class="btn btn-red"  @click="stopPlay"  :disabled="!playing">■ 停止</button>
+    </div>
+  </div>
+
+  <!-- Signal panel -->
+  <div class="signal-panel" v-if="manualReplacePoints.length > 0">
+    <div class="panel-title">替換點訊號控制</div>
+    <div class="signal-group" v-for="rp in manualReplacePoints" :key="rp.id">
+      <div class="signal-group-label">
+        <span class="rp-tag">替換點 {{ rp.name }}</span>
+        <span class="mode-tag manual">手動模式</span>
+        <span class="signal-status" :class="{picked: signals[rp.id] != null}">
+          本輪：{{ signals[rp.id] != null && rp.candidates[signals[rp.id]]
+            ? rp.candidates[signals[rp.id]].name+'（已選）'
+            : '預設（'+(rp.candidates[0]?rp.candidates[0].name:'—')+'）' }}
+        </span>
+      </div>
+      <div class="signal-btns">
+        <button v-for="(cand,ci) in rp.candidates" :key="cand.id"
+          class="btn-signal" :class="[ci===0?'is-default':'is-alt', signals[rp.id]===ci?'selected':'']"
+          @click="setSignal(rp.id, ci)">
+          {{ ci===0?'①':'②③④⑤⑥⑦⑧⑨'[ci-1] }} {{ cand.name }}
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Log -->
+  <div class="log" ref="logEl">
+    <div class="log-header">
+      事件記錄
+      <button class="log-clear" @click="logs=[]">清除</button>
+    </div>
+    <div v-if="logs.length===0" class="log-empty">尚無事件</div>
+    <div v-for="(e,i) in logs" :key="i" class="log-entry">
+      <span class="log-time">{{ e.time }}</span>
+      <span class="log-msg" :class="e.type">{{ e.text }}</span>
+    </div>
+  </div>
+
+</div>
+</div>
+<script>
+let uid = 1
+const mkId = () => uid++
+const getMux = () => window.muxjs || window.mux
+
+function makeCand(label) {
+  return { id: mkId(), name: label, sourceMode: 'file', url: '', fileName: '', file: null, blobUrl: '', duration: 6, dragOver: false }
+}
+function makeSeg(name, isReplace = false) {
+  return {
+    id: mkId(), name,
+    sourceMode: 'file', url: '', fileName: '', file: null, blobUrl: '', dragOver: false,
+    duration: 6, isReplace, randomMode: false,
+    candidates: isReplace ? [makeCand(name+'-1'), makeCand(name+'-2')] : [],
+  }
+}
+
+new Vue({
+  el: '#app',
+  data: {
+    segments: [makeSeg('A'), makeSeg('B'), makeSeg('C'), makeSeg('D', true), makeSeg('E')],
+    playing: false,
+    currentIndex: null,
+    currentSegLabel: null,
+    loopCount: 0,
+    playerStatus: '未播放',
+    progressPct: 0,
+    progressTimer: null,
+    signals: {},
+    hls: null,
+    playSeq: 0,
+    nextSchedIndex: 0,
+    pipelineBusy: false,
+    mseUrl: null,
+    mediaSource: null,
+    sourceBuffer: null,
+    mseHasInit: false,
+    timelineEnd: 0,
+    segTimeline: [],
+    _blobBySeq: {},
+    logs: [],
+  },
+
+  computed: {
+    manualReplacePoints() { return this.segments.filter(s => s.isReplace && !s.randomMode) },
+    statusBadgeClass() {
+      return { '播放中':'badge-green','緩衝中':'badge-yellow','錯誤':'badge-red' }[this.playerStatus] || 'badge-grey'
+    },
+  },
+
+  async mounted() { this.initSignals() },
+  beforeDestroy()  { this.stopPlay(); this.revokeAll() },
+
+  methods: {
+    // ── Log ──────────────────────────────
+    addLog(text, type = 'info') {
+      const d = new Date()
+      const time = [d.getHours(),d.getMinutes(),d.getSeconds()].map(n=>String(n).padStart(2,'0')).join(':')
+      this.logs.push({ time, text, type })
+      this.$nextTick(() => { const el = this.$refs.logEl; if (el) el.scrollTop = el.scrollHeight })
+    },
+
+    // ── Signals ───────────────────────────
+    initSignals() {
+      this.segments.forEach(seg => {
+        if (seg.isReplace && this.signals[seg.id] === undefined) this.$set(this.signals, seg.id, null)
+      })
+    },
+    clearMainSource(seg) {
+      if (seg.blobUrl) URL.revokeObjectURL(seg.blobUrl)
+      seg.url = ''
+      seg.fileName = ''
+      seg.file = null
+      seg.blobUrl = ''
+      seg.dragOver = false
+    },
+    onReplaceToggle(seg) {
+      if (seg.isReplace) {
+        this.clearMainSource(seg)
+        if (!seg.candidates.length) {
+          seg.candidates = [makeCand(seg.name + '-1'), makeCand(seg.name + '-2')]
+        }
+        this.initSignals()
+      } else {
+        seg.candidates.forEach(c => { if (c.blobUrl) URL.revokeObjectURL(c.blobUrl) })
+        seg.candidates = []
+        this.$delete(this.signals, seg.id)
+      }
+    },
+    setSignal(segId, ci) {
+      this.$set(this.signals, segId, ci)
+      const seg = this.segments.find(s => s.id === segId)
+      this.addLog(`替換點「${seg.name}」本輪選擇：${seg.candidates[ci].name}`, ci===0?'ok':'orange')
+    },
+
+    // ── Builder ───────────────────────────
+    addSeg() {
+      const names = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'
+      const name = names[this.segments.length] || `S${this.segments.length+1}`
+      this.segments.push(makeSeg(name))
+      this.$nextTick(() => this.initSignals())
+    },
+    removeSeg(i) {
+      if (this.segments.length <= 1) return
+      this.revokeSeg(this.segments[i]); this.segments.splice(i, 1)
+    },
+    addCand(seg) { seg.candidates.push(makeCand(`${seg.name}-${seg.candidates.length+1}`)) },
+    removeCand(seg, ci) {
+      if (seg.candidates.length <= 1) return
+      const c = seg.candidates[ci]
+      if (c.blobUrl) URL.revokeObjectURL(c.blobUrl)
+      seg.candidates.splice(ci, 1)
+    },
+
+    // ── File ──────────────────────────────
+    getUrl(t) { return t.sourceMode === 'file' ? t.blobUrl : t.url },
+    // 本地檔：每次新建 blob URL（blob: 不支援加 query）；遠端 URL 用 seq 防快取
+    playFragUrl(entry, seq) {
+      if (entry.file) {
+        const url = URL.createObjectURL(entry.file)
+        this._blobBySeq[seq] = url
+        return url
+      }
+      const u = entry.url
+      if (!u) throw new Error(`片段「${entry.label}」沒有有效來源`)
+      if (u.startsWith('blob:')) return u
+      const sep = u.includes('?') ? '&' : '?'
+      return `${u}${sep}_hlsseq=${seq}`
+    },
+    revokeAllBlobs() {
+      Object.values(this._blobBySeq).forEach(u => URL.revokeObjectURL(u))
+      this._blobBySeq = {}
+    },
+    triggerFile(id, slot) {
+      if (this.playing) return
+      const ref = this.$refs[`file-${slot}-${id}`]
+      const el  = Array.isArray(ref) ? ref[0] : ref
+      if (el) el.click()
+    },
+    probeDuration(url) {
+      // 用 hls.js 解析真實 fragment 時長，比 video.duration 準（TS 常不準）
+      return new Promise(resolve => {
+        const body = [
+          '#EXTM3U',
+          '#EXT-X-VERSION:3',
+          '#EXT-X-TARGETDURATION:600',
+          '#EXT-X-MEDIA-SEQUENCE:0',
+          '#EXTINF:600.000,',
+          url,
+          '',
+        ].join('\n')
+        const m3u8 = URL.createObjectURL(new Blob([body], { type: 'application/vnd.apple.mpegurl' }))
+
+        const hls = new Hls({ enableWorker: false })
+        const v = document.createElement('video')
+        hls.attachMedia(v)
+        let done = false
+        const finish = d => {
+          if (done) return
+          done = true
+          clearTimeout(t)
+          hls.destroy()
+          URL.revokeObjectURL(m3u8)
+          v.removeAttribute('src')
+          resolve(d)
+        }
+        const t = setTimeout(() => finish(null), 10000)
+        hls.on(Hls.Events.FRAG_PARSED, (_, data) => {
+          const d = data.frag.start + data.frag.duration
+          if (d > 0) finish(Math.round(d * 1000) / 1000)
+        })
+        hls.on(Hls.Events.ERROR, () => finish(null))
+        hls.loadSource(m3u8)
+      })
+    },
+    async loadFile(file, target, label) {
+      if (!file.name.endsWith('.ts') && file.type !== 'video/mp2t') {
+        this.addLog(`「${file.name}」不是 .ts 檔案`, 'warn'); return
+      }
+      if (target.blobUrl) URL.revokeObjectURL(target.blobUrl)
+      target.file = file
+      target.blobUrl  = URL.createObjectURL(file)
+      target.fileName = file.name
+      const dur = await this.probeDuration(target.blobUrl)
+      if (dur) {
+        target.duration = dur
+        this.addLog(`${label}：${file.name}（${dur}s）`, 'ok')
+      } else {
+        this.addLog(`${label}：${file.name} (${(file.size/1024).toFixed(0)} KB)`, 'ok')
+      }
+    },
+    onFileChange(e, seg)   { const f=e.target.files[0]; if(!f) return; this.loadFile(f,seg,`「${seg.name}」`); e.target.value='' },
+    onDrop(e, seg)         { seg.dragOver=false; const f=e.dataTransfer.files[0]; if(!f) return; this.loadFile(f,seg,`「${seg.name}」`) },
+    onFileChangeCand(e,c)  { const f=e.target.files[0]; if(!f) return; this.loadFile(f,c,`候選「${c.name}」`); e.target.value='' },
+    onDropCand(e, c)       { c.dragOver=false; const f=e.dataTransfer.files[0]; if(!f) return; this.loadFile(f,c,`候選「${c.name}」`) },
+    revokeSeg(seg)         { if(seg.blobUrl) URL.revokeObjectURL(seg.blobUrl); seg.candidates.forEach(c=>{if(c.blobUrl)URL.revokeObjectURL(c.blobUrl)}) },
+    revokeAll()            { this.segments.forEach(s=>this.revokeSeg(s)) },
+
+    // ── Validate ──────────────────────────
+    validate() {
+      for (const seg of this.segments) {
+        if (!seg.isReplace) {
+          if (!this.getUrl(seg)) { this.addLog(`片段「${seg.name}」尚未設定來源`,'warn'); return false }
+        } else {
+          if (!seg.candidates.length) { this.addLog(`替換點「${seg.name}」沒有候選`,'warn'); return false }
+          for (const c of seg.candidates)
+            if (!this.getUrl(c)) { this.addLog(`替換點「${seg.name}」候選「${c.name}」尚未設定`,'warn'); return false }
+        }
+      }
+      return true
+    },
+
+    // ── 決定下一段要播什麼 ────────────────
+    resolveNextSegment(segIndex) {
+      const seg = this.segments[segIndex]
+      if (!seg.isReplace) {
+        return { url: this.getUrl(seg), file: seg.file, duration: seg.duration, label: seg.name, segIndex }
+      }
+      let ci
+      if (seg.randomMode) {
+        ci = Math.floor(Math.random() * seg.candidates.length)
+        this.addLog(`🎲 替換點「${seg.name}」隨機：${seg.candidates[ci].name}`, 'purple')
+      } else {
+        const picked = this.signals[seg.id]
+        ci = picked != null ? picked : 0
+        this.addLog(`替換點「${seg.name}」${picked != null ? '手動：' : '預設：'}${seg.candidates[ci].name}`, picked != null ? 'orange' : 'ok')
+        this.$set(this.signals, seg.id, null)
+      }
+      const cand = seg.candidates[ci]
+      return { url: this.getUrl(cand), file: cand.file, duration: cand.duration, label: cand.name, segIndex }
+    },
+
+    // ── MSE 連續播放：mux.js 重排時間軸，音訊不經 discontinuity ──
+    concatBuf(a, b) {
+      if (!a) return b
+      if (!b) return a
+      const out = new Uint8Array(a.byteLength + b.byteLength)
+      out.set(a, 0)
+      out.set(b, a.byteLength)
+      return out
+    },
+
+    waitSbAppend(fn) {
+      const sb = this.sourceBuffer
+      return new Promise((resolve, reject) => {
+        const run = () => {
+          try { fn() } catch (e) { reject(e); return }
+          if (!sb.updating) { resolve(); return }
+          sb.addEventListener('updateend', () => resolve(), { once: true })
+        }
+        if (sb.updating) sb.addEventListener('updateend', run, { once: true })
+        else run()
+      })
+    },
+
+    async initMse() {
+      this.destroyMse()
+      const v = this.$refs.video
+      const ms = new MediaSource()
+      this.mediaSource = ms
+      this.mseUrl = URL.createObjectURL(ms)
+      v.src = this.mseUrl
+      await new Promise((resolve, reject) => {
+        ms.addEventListener('sourceopen', resolve, { once: true })
+        ms.addEventListener('error', reject, { once: true })
+      })
+    },
+
+    destroyMse() {
+      const v = this.$refs.video
+      if (v) { v.ontimeupdate = null; v.onwaiting = null }
+      if (this.mseUrl) { URL.revokeObjectURL(this.mseUrl); this.mseUrl = null }
+      this.mediaSource = null
+      this.sourceBuffer = null
+      this.mseHasInit = false
+      this.timelineEnd = 0
+      this.segTimeline = []
+    },
+
+    ensureSourceBuffer() {
+      if (this.sourceBuffer || !this.mediaSource) return
+      this.sourceBuffer = this.mediaSource.addSourceBuffer('video/mp4; codecs="avc1.4d401f, mp4a.40.2"')
+      this.sourceBuffer.mode = 'segments'
+    },
+
+    readTimelineEnd() {
+      const sb = this.sourceBuffer
+      if (sb && sb.buffered.length > 0) {
+        return sb.buffered.end(sb.buffered.length - 1)
+      }
+      return this.timelineEnd
+    },
+
+    async transmuxAppend(tsBuf, duration) {
+      const offset = this.readTimelineEnd()
+      const parts = []
+      const mux = getMux()
+      const tx = new mux.mp4.Transmuxer({ keepOriginalTimestamps: false })
+      tx.on('data', s => parts.push(s))
+      tx.push(new Uint8Array(tsBuf))
+      tx.flush()
+
+      if (!parts.length) throw new Error('transmux 無輸出')
+
+      this.ensureSourceBuffer()
+      const sb = this.sourceBuffer
+      for (const seg of parts) {
+        let data = seg.data
+        if (seg.initSegment && !this.mseHasInit) {
+          data = this.concatBuf(seg.initSegment, seg.data)
+          this.mseHasInit = true
+        } else if (seg.initSegment && !data?.byteLength) {
+          continue
+        }
+        if (!data || !data.byteLength) continue
+        await this.waitSbAppend(() => {
+          sb.timestampOffset = offset
+          sb.appendBuffer(data)
+        })
+      }
+      if (sb.buffered.length > 0) {
+        this.timelineEnd = sb.buffered.end(sb.buffered.length - 1)
+      } else {
+        this.timelineEnd = offset + duration
+      }
+    },
+
+    async mseAppendSegment(entry, isLoopStart = false) {
+      if (isLoopStart) {
+        this.loopCount++
+        this.addLog(`── 第 ${this.loopCount} 輪 ──`, 'info')
+        this.segments.forEach(seg => {
+          if (seg.isReplace) this.$set(this.signals, seg.id, null)
+        })
+      }
+      const seq = this.playSeq++
+      const url = this.playFragUrl(entry, seq)
+      const start = this.readTimelineEnd()
+      this.addLog(`排程 [${seq}] ▶ ${entry.label}（${entry.duration}s）`, 'info')
+
+      const tsBuf = await fetch(url).then(r => {
+        if (!r.ok) throw new Error(`無法載入 ${entry.label}`)
+        return r.arrayBuffer()
+      })
+      await this.transmuxAppend(tsBuf, entry.duration)
+      if (this._blobBySeq[seq]) {
+        URL.revokeObjectURL(this._blobBySeq[seq])
+        delete this._blobBySeq[seq]
+      }
+      const end = this.readTimelineEnd()
+      this.segTimeline.push({ start, end, entry })
+      return entry
+    },
+
+    trackSegmentUi() {
+      const v = this.$refs.video
+      if (!v) return
+      const t = v.currentTime
+      const hit = this.segTimeline.find(s => t >= s.start && t < s.end)
+      if (!hit) return
+      if (this.currentIndex !== hit.entry.segIndex) {
+        this.currentIndex    = hit.entry.segIndex
+        this.currentSegLabel = hit.entry.label
+        this.updateProgress(hit.entry.duration)
+      }
+    },
+
+    async ensureBuffer() {
+      if (!this.playing || this.pipelineBusy) return
+      const v = this.$refs.video
+      const ahead = this.timelineEnd - (v.currentTime || 0)
+      if (ahead > 8) return
+
+      this.pipelineBusy = true
+      try {
+        while (this.playing && this.timelineEnd - (v.currentTime || 0) < 12) {
+          const segIndex = this.nextSchedIndex
+          const n = this.segments.length
+          const isLoopStart = segIndex === 0 && this.playSeq > 0 && this.playSeq % n === 0
+          await this.mseAppendSegment(this.resolveNextSegment(segIndex), isLoopStart)
+          this.nextSchedIndex = (segIndex + 1) % n
+        }
+      } finally {
+        this.pipelineBusy = false
+      }
+    },
+
+    async runPipeline() {
+      const v = this.$refs.video
+      v.onwaiting = () => {
+        if (this.playing && v.paused) v.play().catch(() => {})
+      }
+      v.ontimeupdate = () => {
+        this.trackSegmentUi()
+        this.ensureBuffer().catch(e => this.addLog(`排程錯誤：${e.message}`, 'error'))
+      }
+
+      // 先緩衝前 2 段再開播，其餘邊播邊補
+      const preload = Math.min(2, this.segments.length)
+      for (let i = 0; i < preload; i++) {
+        await this.mseAppendSegment(this.resolveNextSegment(i), i === 0)
+        this.nextSchedIndex = (i + 1) % this.segments.length
+      }
+
+      this.playerStatus = '播放中'
+      v.playbackRate = 1
+      await v.play().catch(() => this.addLog('請手動按播放', 'warn'))
+
+      // 開播後繼續補齊本輪其餘片段
+      await this.ensureBuffer()
+
+      while (this.playing) {
+        await this.ensureBuffer()
+        await new Promise(r => setTimeout(r, 300))
+      }
+    },
+
+    // ── 主播放流程 ────────────────────────
+    async startPlay() {
+      if (!this.validate()) return
+      if (!getMux()) {
+        this.addLog('mux.js 載入失敗，請確認透過 localhost 開啟', 'error'); return
+      }
+
+      this.segments.forEach(seg => { if (seg.isReplace) this.$set(this.signals, seg.id, null) })
+      this.playing        = true
+      this.loopCount      = 0
+      this.playSeq        = 0
+      this.nextSchedIndex = 0
+      this._blobBySeq     = {}
+
+      try {
+        await this.initMse()
+        await this.runPipeline()
+      } catch (e) {
+        this.addLog(`播放啟動失敗：${e.message}`, 'error')
+        this.stopPlay()
+      }
+    },
+
+    stopPlay() {
+      this.playing = false
+      this.currentIndex    = null
+      this.currentSegLabel = null
+      this.playerStatus    = '未播放'
+      this.progressPct     = 0
+      if (this.progressTimer) { clearInterval(this.progressTimer); this.progressTimer = null }
+      if (this.hls) { this.hls.destroy(); this.hls = null }
+      this.destroyMse()
+      this.revokeAllBlobs()
+      const v = this.$refs.video
+      if (v) { v.pause(); v.removeAttribute('src'); v.load() }
+    },
+
+    // ── 進度條（根據片段 duration 計時）────
+    updateProgress(duration) {
+      this.progressPct = 0
+      if (this.progressTimer) clearInterval(this.progressTimer)
+      const t0 = Date.now()
+      this.progressTimer = setInterval(() => {
+        this.progressPct = Math.min(99, ((Date.now()-t0)/(duration*1000))*100)
+      }, 100)
+    },
+  },
+})
+</script>
+</body>
+</html>

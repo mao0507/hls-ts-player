@@ -1,0 +1,12 @@
+{
+  "name": "hls-loop-player",
+  "version": "1.0.0",
+  "description": "HLS Loop Player with WebSocket segment switching",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=14"
+  }
+}
