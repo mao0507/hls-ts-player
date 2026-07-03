@@ -1407,6 +1407,7 @@
           },
           onBatchDrop(e) {
             this.batchDragOver = false
+            this.pageDragOver = false
             this.addFilesBatch(e.dataTransfer.files)
           },
           onBatchFileChange(e) {
@@ -1524,6 +1525,7 @@
           },
           onDrop(e, seg) {
             seg.dragOver = false
+            this.pageDragOver = false
             const f = e.dataTransfer.files[0]
             if (!f) return
             this.loadFile(f, seg, `「${seg.name}」`)
@@ -1536,6 +1538,7 @@
           },
           onDropCand(e, c) {
             c.dragOver = false
+            this.pageDragOver = false
             const f = e.dataTransfer.files[0]
             if (!f) return
             this.loadFile(f, c, `候選「${c.name}」`)
