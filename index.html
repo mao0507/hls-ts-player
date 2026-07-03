@@ -370,6 +370,27 @@
       .upload-zone.disabled .upload-text {
         color: #484f58;
       }
+      .batch-drop {
+        margin-bottom: 10px;
+        padding: 10px;
+        justify-content: center;
+      }
+      .page-drag-overlay {
+        position: fixed;
+        inset: 0;
+        z-index: 999;
+        background: rgba(13, 31, 61, 0.85);
+        border: 3px dashed #58a6ff;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        pointer-events: none;
+      }
+      .page-drag-text {
+        font-size: 20px;
+        color: #58a6ff;
+        font-weight: 600;
+      }
       .upload-icon {
         font-size: 0.85rem;
         flex-shrink: 0;
@@ -799,6 +820,9 @@
   <body>
     <h1>HLS Loop Player</h1>
     <div id="app">
+      <div class="page-drag-overlay" v-if="pageDragOver">
+        <div class="page-drag-text">放開以批次加入 .ts 片段</div>
+      </div>
       <div class="card">
         <!-- Video -->
         <div class="player-wrap">
@@ -853,6 +877,27 @@
         <!-- Segment builder -->
         <div class="panel">
           <div class="panel-title">片段設定</div>
+          <div
+            class="upload-zone batch-drop"
+            :class="{'drag-over':batchDragOver}"
+            @click="triggerBatchFile"
+            @dragover.prevent="batchDragOver=true"
+            @dragleave="batchDragOver=false"
+            @drop.prevent.stop="onBatchDrop"
+          >
+            <span class="upload-icon">⇊</span>
+            <span class="upload-text"
+              >批次拖曳多個 .ts 檔案，將依檔名順序自動建立片段</span
+            >
+          </div>
+          <input
+            type="file"
+            accept=".ts,video/mp2t"
+            multiple
+            class="file-input-hidden"
+            ref="batchFileInput"
+            @change="onBatchFileChange"
+          />
           <div class="seg-list">
             <div
               class="seg-row-wrap"
@@ -907,7 +952,7 @@
                         @click="triggerFile(seg.id,'main')"
                         @dragover.prevent="seg.dragOver=true"
                         @dragleave="seg.dragOver=false"
-                        @drop.prevent="onDrop($event,seg)"
+                        @drop.prevent.stop="onDrop($event,seg)"
                       >
                         <span class="upload-icon"
                           >{{ seg.fileName?'✓':'↑' }}</span
@@ -1039,7 +1084,7 @@
                           @click="triggerFile(cand.id,'cand')"
                           @dragover.prevent="cand.dragOver=true"
                           @dragleave="cand.dragOver=false"
-                          @drop.prevent="onDropCand($event,cand)"
+                          @drop.prevent.stop="onDropCand($event,cand)"
                         >
                           <span class="upload-icon"
                             >{{ cand.fileName?'✓':'↑' }}</span
@@ -1198,22 +1243,14 @@
           duration: 6,
           isReplace,
           randomMode: false,
-          candidates: isReplace
-            ? [makeCand(name + '-1'), makeCand(name + '-2')]
-            : [],
+          candidates: isReplace ? [makeCand(name + '-1')] : [],
         }
       }
 
       new Vue({
         el: '#app',
         data: {
-          segments: [
-            makeSeg('A'),
-            makeSeg('B'),
-            makeSeg('C'),
-            makeSeg('D', true),
-            makeSeg('E'),
-          ],
+          segments: [makeSeg('A')],
           playing: false,
           currentIndex: null,
           currentSegLabel: null,
@@ -1234,6 +1271,8 @@
           segTimeline: [],
           _blobBySeq: {},
           logs: [],
+          batchDragOver: false,
+          pageDragOver: false,
         },
 
         computed: {
@@ -1253,10 +1292,28 @@
 
         async mounted() {
           this.initSignals()
+          this._onWindowDragOver = (e) => {
+            e.preventDefault()
+            if (!this.playing) this.pageDragOver = true
+          }
+          this._onWindowDragLeave = (e) => {
+            if (!e.relatedTarget) this.pageDragOver = false
+          }
+          this._onWindowDrop = (e) => {
+            e.preventDefault()
+            this.pageDragOver = false
+            if (e.dataTransfer.files.length) this.addFilesBatch(e.dataTransfer.files)
+          }
+          window.addEventListener('dragover', this._onWindowDragOver)
+          window.addEventListener('dragleave', this._onWindowDragLeave)
+          window.addEventListener('drop', this._onWindowDrop)
         },
         beforeDestroy() {
           this.stopPlay()
           this.revokeAll()
+          window.removeEventListener('dragover', this._onWindowDragOver)
+          window.removeEventListener('dragleave', this._onWindowDragLeave)
+          window.removeEventListener('drop', this._onWindowDrop)
         },
 
         methods: {
@@ -1327,6 +1384,34 @@
             if (this.segments.length <= 1) return
             this.revokeSeg(this.segments[i])
             this.segments.splice(i, 1)
+          },
+          triggerBatchFile() {
+            if (this.playing) return
+            const el = this.$refs.batchFileInput
+            if (el) el.click()
+          },
+          addFilesBatch(fileList) {
+            if (this.playing) return
+            const files = Array.from(fileList).sort((a, b) =>
+              a.name.localeCompare(b.name, undefined, { numeric: true }),
+            )
+            const names = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'
+            files.forEach((file) => {
+              const name =
+                names[this.segments.length] || `S${this.segments.length + 1}`
+              const seg = makeSeg(name)
+              this.segments.push(seg)
+              this.loadFile(file, seg, `「${seg.name}」`)
+            })
+            this.$nextTick(() => this.initSignals())
+          },
+          onBatchDrop(e) {
+            this.batchDragOver = false
+            this.addFilesBatch(e.dataTransfer.files)
+          },
+          onBatchFileChange(e) {
+            this.addFilesBatch(e.target.files)
+            e.target.value = ''
           },
           addCand(seg) {
             seg.candidates.push(
