@@ -41,9 +41,9 @@
 
 ```
 瀏覽器
-├── Vue 2（UI 框架）
-├── hls.js 1.5.7（片段時長探測）
-├── mux.js（MPEG-TS → fMP4 轉封裝）
+├── Vue 2（UI 框架，本地複本）
+├── hls.js 1.5.7（片段時長探測，本地複本）
+├── mux.js（MPEG-TS → fMP4 轉封裝，本地複本）
 └── MediaSource Extensions API（無縫串流播放）
 
 Node.js（本地靜態檔案伺服器）
@@ -74,6 +74,8 @@ hls-player/
 ├── index.html      # 前端全部邏輯（Vue 2 SPA）
 ├── server.js       # Node.js 靜態檔案伺服器
 ├── sw.js           # Service Worker（HLS playlist 動態產生）
+├── vue.min.js      # Vue 2 本地複本
+├── hls.min.js      # hls.js 本地複本（片段時長探測）
 ├── mux.min.js      # mux.js 本地複本（TS→fMP4 轉封裝）
 ├── package.json    # npm 設定（name, version, engines）
 ├── 啟動.bat        # Windows 一鍵啟動腳本
@@ -97,6 +99,7 @@ hls-player/
 ## 環境需求
 
 - **Node.js** >= 14（只用於本地靜態伺服器，無任何 npm 依賴）
+- 前端函式庫（Vue、hls.js、mux.js）皆為本地檔案，不需連外網
 - **瀏覽器**：支援 MediaSource Extensions 的現代瀏覽器（Chrome、Edge、Firefox）
   - Safari 需另行確認 MSE 支援狀況
 - **必須**透過 `http://localhost:3000` 開啟，不可直接用 `file://` 協定（Service Worker 及 fetch 限制）
@@ -139,7 +142,7 @@ node server.js
 | 名稱 | 顯示在片段軌道和 log 的標籤 |
 | 來源（URL） | 填入 `.ts` 檔案的 HTTP URL |
 | 來源（本地） | 點擊或拖曳上傳本地 `.ts` 檔 |
-| 秒數 | 播放時長（自動探測，可手動覆蓋） |
+| 秒數 | 播放時長（自動探測，可手動覆蓋，精度至小數點後 4 位） |
 | 替換點 | 勾選後此片段成為替換點（見下方說明） |
 
 ### 2. 新增 / 刪除片段
