@@ -1774,6 +1774,25 @@
             }
           },
 
+          // 片段銜接處常因浮點捨入產生極小 buffered 間隙，瀏覽器不會自動跳過
+          // 導致卡在原地不動且無任何錯誤。偵測到就直接跳到下一段 buffered 開頭。
+          skipBufferGap() {
+            const v = this.$refs.video
+            if (!v || !this.playing || v.paused) return
+            const t = v.currentTime
+            for (let i = 0; i < v.buffered.length; i++) {
+              const start = v.buffered.start(i)
+              if (start > t && start - t < 1.5) {
+                this.addLog(
+                  `偵測到緩衝間隙，自動跳過 ${(start - t).toFixed(3)}s`,
+                  'warn',
+                )
+                v.currentTime = start + 0.02
+                return
+              }
+            }
+          },
+
           async ensureBuffer() {
             if (!this.playing || this.pipelineBusy) return
             const v = this.$refs.video
@@ -1804,7 +1823,12 @@
           async runPipeline() {
             const v = this.$refs.video
             v.onwaiting = () => {
-              if (this.playing && v.paused) v.play().catch(() => {})
+              if (!this.playing) return
+              this.skipBufferGap()
+              if (v.paused) v.play().catch(() => {})
+              this.ensureBuffer().catch((e) =>
+                this.addLog(`排程錯誤：${e.message}`, 'error'),
+              )
             }
             v.ontimeupdate = () => {
               this.trackSegmentUi()
@@ -1828,7 +1852,12 @@
             await this.ensureBuffer()
 
             while (this.playing) {
-              await this.ensureBuffer()
+              try {
+                await this.ensureBuffer()
+              } catch (e) {
+                this.addLog(`排程錯誤：${e.message}`, 'error')
+              }
+              this.skipBufferGap()
               await new Promise((r) => setTimeout(r, 300))
             }
           },
